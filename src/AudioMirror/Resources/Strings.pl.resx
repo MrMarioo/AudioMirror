@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName" xml:space="preserve"><value>Audio Mirror</value></data>
+  <data name="ErrorTitle" xml:space="preserve"><value>Audio Mirror — błąd</value></data>
+  <data name="TrayOff" xml:space="preserve"><value>Audio Mirror — wyłączony</value></data>
+  <data name="TrayWaiting" xml:space="preserve"><value>Audio Mirror — czeka na urządzenia</value></data>
+  <data name="TrayRunning" xml:space="preserve"><value>Audio Mirror — gra także na: {0}</value></data>
+  <data name="MenuPrimary" xml:space="preserve"><value>Główne (gra zawsze): {0}</value></data>
+  <data name="MenuNoDefault" xml:space="preserve"><value>Brak domyślnego urządzenia</value></data>
+  <data name="MenuMirrorTo" xml:space="preserve"><value>Wyślij dźwięk DODATKOWO na:</value></data>
+  <data name="MenuPrimarySuffix" xml:space="preserve"><value>(główne)</value></data>
+  <data name="MenuStart" xml:space="preserve"><value>▶  Włącz mirror</value></data>
+  <data name="MenuStop" xml:space="preserve"><value>■  Zatrzymaj</value></data>
+  <data name="MenuExit" xml:space="preserve"><value>Zamknij</value></data>
+  <data name="Started" xml:space="preserve"><value>Dźwięk leci teraz także na: {0}</value></data>
+  <data name="NoTargets" xml:space="preserve"><value>Zaznacz najpierw co najmniej jedno urządzenie dodatkowe.</value></data>
+  <data name="NoDefaultDevice" xml:space="preserve"><value>Brak domyślnego urządzenia wyjściowego.</value></data>
+  <data name="DeviceFailed" xml:space="preserve"><value>Urządzenie audio przestało odpowiadać. Mirror wznowi się, gdy znów będzie dostępne.</value></data>
+</root>
