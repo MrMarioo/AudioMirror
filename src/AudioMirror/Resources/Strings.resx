@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="AppName" xml:space="preserve"><value>Audio Mirror</value></data>
+  <data name="ErrorTitle" xml:space="preserve"><value>Audio Mirror — error</value></data>
+  <data name="TrayOff" xml:space="preserve"><value>Audio Mirror — off</value></data>
+  <data name="TrayWaiting" xml:space="preserve"><value>Audio Mirror — waiting for devices</value></data>
+  <data name="TrayRunning" xml:space="preserve"><value>Audio Mirror — mirroring to: {0}</value></data>
+  <data name="MenuPrimary" xml:space="preserve"><value>Main (always plays): {0}</value></data>
+  <data name="MenuNoDefault" xml:space="preserve"><value>No default output device</value></data>
+  <data name="MenuMirrorTo" xml:space="preserve"><value>ALSO play sound on:</value></data>
+  <data name="MenuPrimarySuffix" xml:space="preserve"><value>(main)</value></data>
+  <data name="MenuStart" xml:space="preserve"><value>▶  Start mirroring</value></data>
+  <data name="MenuStop" xml:space="preserve"><value>■  Stop</value></data>
+  <data name="MenuExit" xml:space="preserve"><value>Exit</value></data>
+  <data name="Started" xml:space="preserve"><value>Sound now also plays on: {0}</value></data>
+  <data name="NoTargets" xml:space="preserve"><value>Select at least one extra device first.</value></data>
+  <data name="NoDefaultDevice" xml:space="preserve"><value>There is no default output device.</value></data>
+  <data name="DeviceFailed" xml:space="preserve"><value>An audio device stopped responding. Mirroring will resume when it is available again.</value></data>
+</root>

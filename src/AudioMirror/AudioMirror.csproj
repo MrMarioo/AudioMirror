@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>AudioMirror</AssemblyName>
+    <RootNamespace>AudioMirror</RootNamespace>
+    <Version>1.1.0</Version>
+    <Product>Audio Mirror</Product>
+    <Description>Plays Windows system sound on several output devices at once.</Description>
+    <SatelliteResourceLanguages>en;pl</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- Single-file publish settings (see README and the release workflow). -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <!-- Self-contained by default; pass "self-contained false" to get a small runtime-dependent exe. -->
+    <SelfContained Condition="'$(SelfContained)' == ''">true</SelfContained>
+    <EnableCompressionInSingleFile Condition="'$(SelfContained)' == 'true'">true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Only the WASAPI part of NAudio: the "NAudio" meta-package also pulls in WPF/WinMM/ASIO/MIDI
+         and makes the self-contained build several times bigger. -->
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AudioMirror.Tests" />
+  </ItemGroup>
+
+</Project>

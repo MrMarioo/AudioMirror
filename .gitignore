@@ -22,3 +22,7 @@ packages/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Test results
+TestResults/
+*.trx
