@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -16,6 +18,9 @@ namespace AudioMirror
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+            // NotifyIcon is not a Control, so make sure a UI SynchronizationContext exists
+            // before TrayApp captures it for marshalling audio-thread events.
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
             using (new TrayApp())
             {
                 Application.Run();
@@ -26,14 +31,20 @@ namespace AudioMirror
     public class TrayApp : IDisposable
     {
         private readonly NotifyIcon _tray;
+        private readonly SynchronizationContext _ui;
         private readonly MMDeviceEnumerator _enumerator = new MMDeviceEnumerator();
-        private readonly List<OutputPipe> _pipes = new List<OutputPipe>();
         private readonly HashSet<string> _selectedIds = new HashSet<string>();
+
+        // Guards _pipes: written by the UI thread, read by the capture thread.
+        private readonly object _sync = new object();
+        private OutputPipe[] _pipes = Array.Empty<OutputPipe>();
         private WasapiLoopbackCapture _capture;
         private bool _running;
 
         public TrayApp()
         {
+            _ui = SynchronizationContext.Current
+                  ?? throw new InvalidOperationException("TrayApp must be created on the UI thread.");
             _tray = new NotifyIcon
             {
                 Icon = LoadTrayIcon(),
@@ -45,8 +56,15 @@ namespace AudioMirror
             BuildMenu();
         }
 
-        private MMDevice DefaultDevice()
-            => _enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+        private MMDevice TryGetDefaultDevice()
+        {
+            try { return _enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia); }
+            catch (COMException ex)
+            {
+                Log.Warn("No default render device: " + ex.Message);
+                return null;
+            }
+        }
 
         private List<MMDevice> ActiveOutputs()
             => _enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active).ToList();
@@ -56,32 +74,38 @@ namespace AudioMirror
             var menu = _tray.ContextMenuStrip;
             menu.Items.Clear();
 
-            MMDevice def = null;
-            try { def = DefaultDevice(); } catch { }
-
-            menu.Items.Add(new ToolStripMenuItem(
-                def != null ? "Główne (gra zawsze): " + def.FriendlyName : "Brak domyślnego urządzenia")
-            { Enabled = false });
-
-            menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add(new ToolStripMenuItem("Wyślij dźwięk DODATKOWO na:") { Enabled = false });
-
-            foreach (var dev in ActiveOutputs())
+            // MMDevice wraps COM objects; release them as soon as the menu is built.
+            using var def = TryGetDefaultDevice();
+            var outputs = ActiveOutputs();
+            try
             {
-                bool isDefault = def != null && dev.ID == def.ID;
-                var item = new ToolStripMenuItem(dev.FriendlyName + (isDefault ? "   (główne)" : ""))
+                menu.Items.Add(new ToolStripMenuItem(
+                    def != null ? "Główne (gra zawsze): " + def.FriendlyName : "Brak domyślnego urządzenia")
+                { Enabled = false });
+
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add(new ToolStripMenuItem("Wyślij dźwięk DODATKOWO na:") { Enabled = false });
+
+                foreach (var dev in outputs)
                 {
-                    Checked = _selectedIds.Contains(dev.ID),
-                    Enabled = !isDefault,
-                    Tag = dev.ID
-                };
-                item.Click += (s, e) =>
-                {
-                    var id = (string)((ToolStripMenuItem)s).Tag;
-                    if (!_selectedIds.Remove(id)) _selectedIds.Add(id);
-                    if (_running) Restart();
-                };
-                menu.Items.Add(item);
+                    bool isDefault = def != null && dev.ID == def.ID;
+                    var id = dev.ID;
+                    var item = new ToolStripMenuItem(dev.FriendlyName + (isDefault ? "   (główne)" : ""))
+                    {
+                        Checked = _selectedIds.Contains(id),
+                        Enabled = !isDefault
+                    };
+                    item.Click += (s, e) =>
+                    {
+                        if (!_selectedIds.Remove(id)) _selectedIds.Add(id);
+                        if (_running) Restart();
+                    };
+                    menu.Items.Add(item);
+                }
+            }
+            finally
+            {
+                foreach (var d in outputs) d.Dispose();
             }
 
             menu.Items.Add(new ToolStripSeparator());
@@ -96,12 +120,18 @@ namespace AudioMirror
 
         private void Start()
         {
+            var pipes = new List<OutputPipe>();
+            var targets = new List<MMDevice>();
             try
             {
-                var primary = DefaultDevice();
-                var targets = ActiveOutputs()
-                    .Where(d => _selectedIds.Contains(d.ID) && d.ID != primary.ID)
-                    .ToList();
+                using var primary = TryGetDefaultDevice()
+                    ?? throw new InvalidOperationException("Brak domyślnego urządzenia wyjściowego.");
+
+                foreach (var d in ActiveOutputs())
+                {
+                    if (_selectedIds.Contains(d.ID) && d.ID != primary.ID) targets.Add(d);
+                    else d.Dispose();
+                }
 
                 if (targets.Count == 0)
                 {
@@ -110,40 +140,88 @@ namespace AudioMirror
                     return;
                 }
 
+                var names = targets.Select(t => t.FriendlyName).ToList();
                 _capture = new WasapiLoopbackCapture(primary);
                 foreach (var dev in targets)
-                    _pipes.Add(new OutputPipe(dev, _capture.WaveFormat));
-
-                _capture.DataAvailable += (s, e) =>
                 {
-                    foreach (var p in _pipes)
-                        p.Buffer.AddSamples(e.Buffer, 0, e.BytesRecorded);
-                };
+                    // The pipe takes ownership of the device and disposes it.
+                    var pipe = new OutputPipe(dev, _capture.WaveFormat);
+                    pipe.Faulted += OnAudioFault;
+                    pipes.Add(pipe);
+                }
 
-                foreach (var p in _pipes) p.Start();
+                _capture.DataAvailable += OnDataAvailable;
+                _capture.RecordingStopped += (s, e) => { if (e.Exception != null) OnAudioFault(e.Exception); };
+
+                lock (_sync) _pipes = pipes.ToArray();
+                foreach (var p in pipes) p.Start();
                 _capture.StartRecording();
 
                 _running = true;
                 _tray.Text = "Audio Mirror — włączony";
                 _tray.ShowBalloonTip(2500, "Audio Mirror",
-                    "Dźwięk leci teraz także na: " + string.Join(", ", targets.Select(t => t.FriendlyName)),
-                    ToolTipIcon.Info);
+                    "Dźwięk leci teraz także na: " + string.Join(", ", names), ToolTipIcon.Info);
+                Log.Info("Mirroring started: " + string.Join(", ", names));
             }
             catch (Exception ex)
             {
+                Log.Error("Start failed", ex);
+                // Devices not yet owned by a pipe, and pipes not yet published to _pipes, would leak.
+                foreach (var d in targets.Skip(pipes.Count)) d.Dispose();
+                bool published;
+                lock (_sync) published = _pipes.Length > 0;
+                if (!published) foreach (var p in pipes) p.Dispose();
                 Stop();
                 _tray.ShowBalloonTip(5000, "Audio Mirror — błąd", ex.Message, ToolTipIcon.Error);
             }
         }
 
+        // Runs on the capture thread.
+        private void OnDataAvailable(object sender, WaveInEventArgs e)
+        {
+            lock (_sync)
+            {
+                foreach (var p in _pipes)
+                    p.Write(e.Buffer, e.BytesRecorded);
+            }
+        }
+
+        // May be raised on any thread; always handled on the UI thread.
+        private void OnAudioFault(Exception ex)
+        {
+            _ui.Post(_ =>
+            {
+                if (!_running) return;
+                Log.Error("Audio device failed, stopping mirror", ex);
+                Stop();
+                _tray.ShowBalloonTip(5000, "Audio Mirror — błąd",
+                    "Urządzenie audio przestało odpowiadać. Mirror zatrzymany.", ToolTipIcon.Error);
+            }, null);
+        }
+
         private void Stop()
         {
             _running = false;
-            try { _capture?.StopRecording(); } catch { }
-            _capture?.Dispose();
-            _capture = null;
-            foreach (var p in _pipes) p.Dispose();
-            _pipes.Clear();
+
+            OutputPipe[] pipes;
+            lock (_sync)
+            {
+                pipes = _pipes;
+                _pipes = Array.Empty<OutputPipe>();
+            }
+
+            // Dispose the capture outside the lock: it waits for the capture thread,
+            // which may itself be waiting on _sync inside OnDataAvailable.
+            if (_capture != null)
+            {
+                _capture.DataAvailable -= OnDataAvailable;
+                try { _capture.StopRecording(); }
+                catch (Exception ex) { Log.Warn("StopRecording failed: " + ex.Message); }
+                _capture.Dispose();
+                _capture = null;
+            }
+
+            foreach (var p in pipes) p.Dispose();
             _tray.Text = "Audio Mirror — wyłączony";
         }
 
@@ -162,7 +240,10 @@ namespace AudioMirror
                     return icon;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Log.Warn("Could not load tray icon: " + ex.Message);
+            }
             return SystemIcons.Application;
         }
 
@@ -182,40 +263,83 @@ namespace AudioMirror
 
     internal class OutputPipe : IDisposable
     {
-        public BufferedWaveProvider Buffer { get; }
+        private readonly MMDevice _device;
+        private readonly BufferedWaveProvider _buffer;
         private readonly WasapiOut _out;
         private readonly IDisposable _resampler;
 
+        public event Action<Exception> Faulted;
+
         public OutputPipe(MMDevice device, WaveFormat captureFormat)
         {
-            Buffer = new BufferedWaveProvider(captureFormat)
+            _device = device;
+            _buffer = new BufferedWaveProvider(captureFormat)
             {
                 DiscardOnBufferOverflow = true,
                 BufferDuration = TimeSpan.FromSeconds(2)
             };
 
             _out = new WasapiOut(device, AudioClientShareMode.Shared, true, 100);
+            _out.PlaybackStopped += (s, e) => { if (e.Exception != null) Faulted?.Invoke(e.Exception); };
 
-            var target = device.AudioClient.MixFormat;
+            // MMDevice.AudioClient activates a new COM client on every access, so dispose it.
+            WaveFormat target;
+            using (var client = device.AudioClient) target = client.MixFormat;
+
             if (!captureFormat.Equals(target))
             {
-                var res = new MediaFoundationResampler(Buffer, target) { ResamplerQuality = 60 };
+                var res = new MediaFoundationResampler(_buffer, target) { ResamplerQuality = 60 };
                 _resampler = res;
                 _out.Init(res);
             }
             else
             {
-                _out.Init(Buffer);
+                _out.Init(_buffer);
             }
         }
 
         public void Start() => _out.Play();
 
+        public void Write(byte[] data, int count) => _buffer.AddSamples(data, 0, count);
+
         public void Dispose()
         {
-            try { _out?.Stop(); } catch { }
-            _out?.Dispose();
+            try { _out.Stop(); }
+            catch (Exception ex) { Log.Warn("WasapiOut.Stop failed: " + ex.Message); }
+            _out.Dispose();
             _resampler?.Dispose();
+            _device.Dispose();
+        }
+    }
+
+    /// <summary>Minimal append-only log in %LocalAppData%\AudioMirror.</summary>
+    internal static class Log
+    {
+        private const long MaxBytes = 512 * 1024;
+        private static readonly object Gate = new object();
+
+        public static string FilePath { get; } = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AudioMirror", "audiomirror.log");
+
+        public static void Info(string message) => Write("INFO", message);
+        public static void Warn(string message) => Write("WARN", message);
+        public static void Error(string message, Exception ex) => Write("ERROR", message + Environment.NewLine + ex);
+
+        private static void Write(string level, string message)
+        {
+            try
+            {
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+                    var info = new FileInfo(FilePath);
+                    if (info.Exists && info.Length > MaxBytes) info.Delete();
+                    File.AppendAllText(FilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}");
+                }
+            }
+            catch (IOException) { /* logging must never crash the app */ }
+            catch (UnauthorizedAccessException) { }
         }
     }
 }
