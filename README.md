@@ -45,7 +45,7 @@ change the default device in Windows sound settings; Audio Mirror follows it aut
 
 ```
                       ┌──────────────────────── per extra device ───────────────────────┐
- default device ──▶ WASAPI      ──▶  BufferedWaveProvider ──▶ (MediaFoundation  ──▶ WasapiOut ──▶ device
+ default device -> WASAPI      ->  BufferedWaveProvider -> (MediaFoundation  -> WasapiOut -> device
  (loopback)         loopback          + LatencyGuard            resampler, if the
                     capture                                     format differs)
                       └──────────────────────────────────────────────────────────────────┘
